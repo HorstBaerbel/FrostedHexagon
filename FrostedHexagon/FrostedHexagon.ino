@@ -78,36 +78,43 @@ void juggle() {
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*PatternFunction)();
-PatternFunction ledPatterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
-uint8_t patternIndex = 0; // [0, ARRAY_SIZE(ledPatterns) - 1]
-uint8_t brightness = 96; // [32, 255]
-uint8_t speed = 128; // [0, 255]
+PatternFunction patterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
 bool cyclePatterns = true; // true = cycle through patterns
+uint8_t patternIndex = 0; // [0, ARRAY_SIZE(patterns) - 1]
+#define PATTERNINDEX_MIN 0
+#define PATTERNINDEX_MAX ARRAY_SIZE(patterns)-1
 
+void patterns_next()
+{
+    patternIndex = (patternIndex + 1) % ARRAY_SIZE(patterns); // increase pattern and wrap around
+}
+
+void patterns_update()
+{
+    EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
+    EVERY_N_SECONDS( 10 ) { if (cyclePatterns) { patterns_next(); } } // change patterns periodically
+    patterns[patternIndex]();
+}
+
+uint8_t brightness = 96; // [32, 255]
 #define BRIGHTNESS_MIN 32
 #define BRIGHTNESS_MAX 255
+
+uint8_t speed = 128; // [0, 255]
 #define SPEED_MIN 0
 #define SPEED_MAX 255
-#define PATTERNINDEX_MIN 0
-#define PATTERNINDEX_MAX ARRAY_SIZE(ledPatterns)-1
-
-void leds_nextPattern()
-{
-  // add one to the current pattern number, and wrap around at the end
-  patternIndex = (patternIndex + 1) % ARRAY_SIZE(ledPatterns);
-}
 
 //----- rotary encoder ----------------------------------------------
 //#define ENCODER_DO_NOT_USE_INTERRUPTS // define this if you have problems with other libraries using interrupts
 //#define ENCODER_OPTIMIZE_INTERRUPTS // define this to use optimized interrupt routines
 #include <Encoder.h>
-Encoder encoder(8, 9);
+Encoder encoder(9, 8);
 
 //----- encoder button ----------------------------------------------
 #include <Pushbutton.h>
 Pushbutton encoderButton(7);
 
-//----- settings and GUI state ----------------------------------------------
+//----- menu state --------------------------------------------------
 #define MENU_TIMEOUT 10000 // menu will be hidden after 10s
 long lastMenuAction = 0; // the last time the user did something
 uint8_t menuIndex = 0; // 0 = animation selection, 1 = brightness, 2 = speed
@@ -123,24 +130,21 @@ void menu_checkEncoderButton()
 {
     // check if button was pressed
     if (encoderButton.getSingleDebouncedPress()) {
+        lastMenuAction = millis(); // yes. update last menu usage time
         switch (menuState) {
             case 0:
-                lastMenuAction = millis();
-                menuState = 1; // activate menu selection
+                menuState = 1; // we're in "off" state, activate menu selection
                 break;
             case 1:
-                lastMenuAction = millis();
-                menuState = 2; // activate adjustment of parameter and set value of encoder to parameter to adjust
+                menuState = 2; // we're in menu selection, activate adjustment of parameter
                 if (menuIndex == 0) {
                     menuPatternIndex = cyclePatterns ? 0 : patternIndex + 1; // if cycling is on, value is 0, else value is patternIndex + 1
                 }
                 break;
             case 2:
-                lastMenuAction = millis();
-                menuState = 1; // deactivate adjustment of parameter again and activate menu selection
+                menuState = 1; // we're in parameter adjustment mode, return to menu selection
                 break;
             default:
-                lastMenuAction = millis();
                 menuState = 0; // not sure what happened, hide menu
         }
         encoder.write(0);
@@ -149,10 +153,13 @@ void menu_checkEncoderButton()
 
 void menu_checkEncoder()
 {
-    int value = -(encoder.read() / 2);
+    // the encoder always shows us two steps, so halve it
+    int value = encoder.read() / 2;
+    // the encoder is always reset to 0, so check if the value changed
     if (value != 0) {
-        lastMenuAction = millis();
+        lastMenuAction = millis(); // yes. update last menu usage time
         if (menuState == 1) {
+            // we're in menu selection mode, change the menu item
             int newIndex = constrain(menuIndex + value, 0, 2);
             if (menuIndex != newIndex) {
                 menuIndex = newIndex;
@@ -160,6 +167,7 @@ void menu_checkEncoder()
             }
         }
         else if (menuState == 2) {
+            // we're in parameter change mode, so check what parameter to change
             switch (menuIndex) {
                 case 0: {
                     int newIndex = constrain(menuPatternIndex + value, 0, PATTERNINDEX_MAX + 1);
@@ -202,23 +210,30 @@ void menu_checkTimeout()
 
 void menu_overlay()
 {
-    for (int i = 16; i < NUM_LEDS; ++i) { 
-        leds[i] = CRGB(0, 0, 0);
-    }
-    for (int i = 12; i < 16; ++i) {
-        leds[i].fadeToBlackBy(192);
-    }
-    const uint8_t colorValue = menuState == 1 || menuBlinkState ? 255 : 0;
-    switch (menuIndex) {
-        case 0: // select pattern
-            leds[16] = CRGB(colorValue, 0, 0);
-            break;
-        case 1: // set brightness
-            leds[17] = CRGB(0, colorValue, 0);
-            break;
-        case 2: // set speed
-            leds[18] = CRGB(0, 0, colorValue);
-            break;
+    if (menuState > 0) {
+        // clear first row of display for menu
+        for (int i = 16; i < NUM_LEDS; ++i) { 
+            leds[i] = CRGB(0, 0, 0);
+        }
+        // dim down second row of display for menu
+        for (int i = 12; i < 16; ++i) {
+            leds[i].fadeToBlackBy(192);
+        }
+        // make blinking work
+        EVERY_N_MILLISECONDS( MENU_BLINK_INTERVAL ) { menuBlinkState = !menuBlinkState; }
+        const uint8_t colorValue = menuState == 1 || menuBlinkState ? 255 : 0;
+        // highlight selected menu item
+        switch (menuIndex) {
+            case 0: // select pattern
+                leds[16] = CRGB(colorValue, 0, 0);
+                break;
+            case 1: // set brightness
+                leds[17] = CRGB(0, colorValue, 0);
+                break;
+            case 2: // set speed
+                leds[18] = CRGB(0, 0, colorValue);
+                break;
+        }
     }
 }
 
@@ -231,7 +246,7 @@ void eeprom_storeState() {
     if (mustStoreSettings) {
         mustStoreSettings = false;
         int address = EEPROM_START_ADDRESS;
-        EEPROM.update(address++, EEPROM_MAGIC[0]); // store magic header
+        EEPROM.update(address++, EEPROM_MAGIC[0]); // store magic header bytes
         EEPROM.update(address++, EEPROM_MAGIC[1]);
         EEPROM.update(address++, EEPROM_MAGIC[2]);
         EEPROM.update(address++, EEPROM_MAGIC[3]);
@@ -240,19 +255,27 @@ void eeprom_storeState() {
         EEPROM.update(address++, patternIndex);
         EEPROM.update(address++, cyclePatterns);
         EEPROM.update(address++, menuIndex);
+#ifdef SERIAL_OUTPUT
         Serial.println("Stored to EEPROM");
+#endif
     }
 }
 
 void eeprom_loadState() {
-    Serial.println("Loading from EEPROM");
+#ifdef SERIAL_OUTPUT
+    Serial.print("Loading from EEPROM - ");
+#endif
     int address = EEPROM_START_ADDRESS;
-    // check if we find the magic header
+    // check if we can find the magic header
     if (EEPROM.read(address++) == EEPROM_MAGIC[0] &&
         EEPROM.read(address++) == EEPROM_MAGIC[1] &&
         EEPROM.read(address++) == EEPROM_MAGIC[2] &&
         EEPROM.read(address++) == EEPROM_MAGIC[3])
     {
+        // read the settings. note that constrain is a macro and thus it can not be used like:
+        // uint8_t value = constrain(EEPROM.read(address++), a, b), because it will get expanded to
+        // uint8_t value = EEPROM.read(address++) < a ? a : EEPROM.read(address++) > b ? b : EEPROM.read(address++);
+        // and obviously give bogus results...
         uint8_t tempBrightness = EEPROM.read(address++);
         brightness = constrain(tempBrightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX);
         uint8_t tempSpeed = EEPROM.read(address++);
@@ -264,12 +287,12 @@ void eeprom_loadState() {
         uint8_t tempMenuIndex = EEPROM.read(address++);
         menuIndex = constrain(tempMenuIndex, MENUINDEX_MIN, MENUINDEX_MAX);
 #ifdef SERIAL_OUTPUT
-        Serial.println("Read:");
+        Serial.println("Ok. Read:");
 #endif
     }
 #ifdef SERIAL_OUTPUT
     else {
-        Serial.println("Bad magic number!");
+        Serial.println("Error. Bad magic number!");
     }
     dumpStateToSerial();
 #endif
@@ -281,6 +304,7 @@ void eeprom_loadState() {
 void dumpStateToSerial(bool dump)
 {
     if (dump) {
+        Serial.println("-------------------");
         Serial.println("Brightness: " + String(brightness));
         Serial.println("Speed: " + String(speed));
         Serial.println("Pattern index: " + String(patternIndex));
@@ -295,28 +319,21 @@ void setup()
     delay(3000); // 3 second delay for recovery
 #ifdef SERIAL_OUTPUT
     Serial.begin(115200);
-    Serial.println("Frosted Hexagon");
+    Serial.println("----- Started -----");
 #endif
     eeprom_loadState(); // load state from EEPROM
-    encoder.write(menuIndex);
+    encoder.write(0);
     // set up LEDs
     FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
 }
   
 void loop()
 {
-    // do some periodic updates
-    EVERY_N_MILLISECONDS( MENU_BLINK_INTERVAL ) { menuBlinkState = !menuBlinkState; }
-    EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
-    EVERY_N_SECONDS( 10 ) { if (cyclePatterns) { leds_nextPattern(); } } // change patterns periodically
-    // update LEDs through pattern
-    ledPatterns[patternIndex]();
     FastLED.setBrightness(brightness);
-    // check if we want to display the menu
-    if (menuState > 0) {
-        // draw GUI on top of LED data
-        menu_overlay();
-    }
+    // update LEDs through pattern
+    patterns_update();
+    // draw GUI on top of LED data
+    menu_overlay();
     // push data to LEDs
     FastLED.show();
     // insert a delay to keep the framerate modest
