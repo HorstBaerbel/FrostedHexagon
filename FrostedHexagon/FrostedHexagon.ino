@@ -1,107 +1,113 @@
 //----- Helpers -----------------------------------------------------
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
-void dumpStateToSerial(bool dump = true);
-
 //#define SERIAL_OUTPUT
+#ifdef SERIAL_OUTPUT
+    void dumpStateToSerial(bool dumpOverride = false);
+#endif
 
 //----- FastLED -----------------------------------------------------
 #include "FastLED.h"
 FASTLED_USING_NAMESPACE
 
-#define DATA_PIN    2
-#define LED_TYPE    WS2812
+#define DATA_PIN 2
+#define LED_TYPE WS2812
 #define COLOR_ORDER GRB
-#define NUM_LEDS    19
+#define NUM_LEDS 19
 CRGB leds[NUM_LEDS];
-#define FRAMES_PER_SECOND  120
+#define FRAMES_PER_SECOND 60
 
 //----- pattern functions ----------------------------------------------
-uint8_t gHue = 0; // rotating "base color" used by many of the patterns
+// all these pattern functions must be time-based. that is they must base their
+// visuals solely on a uint16_t input parameter that increases from 0 to 65536 
+// in one animation cycle.
 
-void rainbow() 
+void rainbow(uint16_t cycleFrac)
 {
-  // FastLED's built-in rainbow generator
-  fill_rainbow( leds, NUM_LEDS, gHue, 7);
+    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFrac) >> 16;
+    fill_rainbow( leds, NUM_LEDS, hue, 7);
 }
 
 void addGlitter( fract8 chanceOfGlitter) 
 {
-  if( random8() < chanceOfGlitter) {
-    leds[ random16(NUM_LEDS) ] += CRGB::White;
-  }
+    if (random8() < chanceOfGlitter) {
+        leds[ random16(NUM_LEDS) ] += CRGB::White;
+    }
 }
 
-void rainbowWithGlitter() 
+void rainbowWithGlitter(uint16_t cycleFrac) 
 {
-  // built-in FastLED rainbow, plus some random sparkly glitter
-  rainbow();
-  addGlitter(80);
+    // built-in FastLED rainbow, plus some random sparkly glitter
+    rainbow(cycleFrac);
+    addGlitter(80);
 }
 
-void confetti() 
+void confetti(uint16_t cycleFrac)
 {
-  // random colored speckles that blink in and fade smoothly
-  fadeToBlackBy( leds, NUM_LEDS, 10);
-  int pos = random16(NUM_LEDS);
-  leds[pos] += CHSV( gHue + random8(64), 200, 255);
+    // random colored speckles that blink in and fade smoothly
+    fadeToBlackBy( leds, NUM_LEDS, 10);
+    int pos = random16(NUM_LEDS);
+    leds[pos] += CHSV( (255 * cycleFrac) / 65536 + random8(64), 200, 255);
 }
 
-void sinelon()
+void sinelon(uint16_t cycleFrac)
 {
-  // a colored dot sweeping back and forth, with fading trails
-  fadeToBlackBy( leds, NUM_LEDS, 20);
-  int pos = beatsin16(13,0,NUM_LEDS);
-  leds[pos] += CHSV( gHue, 255, 192);
+    // a colored dot sweeping back and forth, with fading trails
+    fadeToBlackBy( leds, NUM_LEDS, 20);
+    int pos = beatsin16(13,0,NUM_LEDS);
+    leds[pos] += CHSV( (255 * cycleFrac) / 65536, 255, 192);
 }
 
-void bpm()
+void bpm(uint16_t cycleFrac)
 {
-  // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
-  uint8_t BeatsPerMinute = 62;
-  CRGBPalette16 palette = PartyColors_p;
-  uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
-  for( int i = 0; i < NUM_LEDS; i++) { //9948
-    leds[i] = ColorFromPalette(palette, gHue+(i*2), beat-gHue+(i*10));
-  }
+    // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
+    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFrac) >> 16;
+    uint8_t BeatsPerMinute = 62;
+    CRGBPalette16 palette = PartyColors_p;
+    uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
+    for( int i = 0; i < NUM_LEDS; i++) { //9948
+        leds[i] = ColorFromPalette(palette, hue + (i*2), beat - hue + (i*10));
+    }
 }
 
-void juggle() {
-  // eight colored dots, weaving in and out of sync with each other
-  fadeToBlackBy( leds, NUM_LEDS, 20);
-  byte dothue = 0;
-  for( int i = 0; i < 8; i++) {
-    leds[beatsin16(i+7,0,NUM_LEDS)] |= CHSV(dothue, 200, 255);
-    dothue += 32;
-  }
+void juggle(uint16_t cycleFrac)
+{
+    // eight colored dots, weaving in and out of sync with each other
+    fadeToBlackBy( leds, NUM_LEDS, 20);
+    byte dothue = 0;
+    for( int i = 0; i < 8; i++) {
+        leds[beatsin16(i+7,0,NUM_LEDS)] |= CHSV(dothue, 200, 255);
+        dothue += 32;
+    }
 }
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
-typedef void (*PatternFunction)();
+typedef void (*PatternFunction)(uint16_t);
 PatternFunction patterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
 bool cyclePatterns = true; // true = cycle through patterns
 uint8_t patternIndex = 0; // [0, ARRAY_SIZE(patterns) - 1]
 #define PATTERNINDEX_MIN 0
 #define PATTERNINDEX_MAX ARRAY_SIZE(patterns)-1
+uint16_t patternCycleFract = 0; // a full cycle for an effect goes from 0 to 1.0 aka 65536
 
 void patterns_next()
 {
     patternIndex = (patternIndex + 1) % ARRAY_SIZE(patterns); // increase pattern and wrap around
 }
 
-void patterns_update()
-{
-    EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
-    EVERY_N_SECONDS( 10 ) { if (cyclePatterns) { patterns_next(); } } // change patterns periodically
-    patterns[patternIndex]();
+void patterns_update(uint8_t factor)
+{	
+    EVERY_N_SECONDS(10) { if (cyclePatterns) { patterns_next(); } } // change patterns periodically
+	EVERY_N_MILLISECONDS(50) { patternCycleFract += ((((uint32_t)65535 * 50) * factor) / 1024) / 512; } // calculate fractional pattern cycle increase
+    patterns[patternIndex](patternCycleFract);
 }
 
 uint8_t brightness = 96; // [32, 255]
 #define BRIGHTNESS_MIN 32
 #define BRIGHTNESS_MAX 255
 
-uint8_t speed = 128; // [0, 255]
-#define SPEED_MIN 0
+uint8_t speed = 128; // [1, 255]
+#define SPEED_MIN 1
 #define SPEED_MAX 255
 
 //----- rotary encoder ----------------------------------------------
@@ -203,8 +209,11 @@ void menu_checkEncoder()
 void menu_checkTimeout()
 {
     if ((millis() - lastMenuAction) >= MENU_TIMEOUT) {
+        // clear menu state to show full animation
         menuState = 0;
         lastMenuAction = millis();
+        // store state if some of the settings changed
+        eeprom_storeState();
     }
 }
 
@@ -294,17 +303,24 @@ void eeprom_loadState() {
     else {
         Serial.println("Error. Bad magic number!");
     }
-    dumpStateToSerial();
+    dumpStateToSerial(true);
 #endif
     mustStoreSettings = false;
 }
 
 //----- main loop -----------------------------------------------------
 
-void dumpStateToSerial(bool dump)
+#ifdef SERIAL_OUTPUT
+uint8_t lastBrightness = brightness;
+uint8_t lastSpeed = speed;
+uint8_t lastPatternIndex = patternIndex;
+uint8_t lastCyclePatterns = cyclePatterns;
+uint8_t lastMenuState = menuState;
+uint8_t lastMenuIndex = menuIndex;
+
+void dumpStateToSerial(bool dumpOverride)
 {
-    if (dump) {
-        Serial.println("-------------------");
+    if (dumpOverride) {
         Serial.println("Brightness: " + String(brightness));
         Serial.println("Speed: " + String(speed));
         Serial.println("Pattern index: " + String(patternIndex));
@@ -312,7 +328,34 @@ void dumpStateToSerial(bool dump)
         Serial.println("Menu state: " + String(menuState));
         Serial.println("Menu index: " + String(menuIndex));
     }
+    else {
+        if (lastBrightness != brightness) {
+            lastBrightness = brightness;
+            Serial.println("Brightness: " + String(brightness));
+        }
+        if (lastSpeed != speed) {
+            lastSpeed = speed;
+            Serial.println("Speed: " + String(speed));
+        }
+        if (lastPatternIndex != patternIndex) {
+            lastPatternIndex = patternIndex;
+            Serial.println("Pattern index: " + String(patternIndex));
+        }
+        if (lastCyclePatterns != cyclePatterns) {
+            lastCyclePatterns = cyclePatterns;
+            Serial.println("Cycle patterns: " + String(cyclePatterns));
+        }
+        if (lastMenuState != menuState) {
+            lastMenuState = menuState;
+            Serial.println("Menu state: " + String(menuState));
+        }
+        if (lastMenuIndex != menuIndex) {
+            lastMenuIndex = menuIndex;
+            Serial.println("Menu index: " + String(menuIndex));
+        }
+    }
 }
+#endif
 
 void setup()
 {
@@ -331,21 +374,17 @@ void loop()
 {
     FastLED.setBrightness(brightness);
     // update LEDs through pattern
-    patterns_update();
+    patterns_update(speed);
     // draw GUI on top of LED data
     menu_overlay();
-    // push data to LEDs
-    FastLED.show();
-    // insert a delay to keep the framerate modest
-    //FastLED.delay(1000/FRAMES_PER_SECOND); 
-    // update GUI
+    // push data to LEDs at 60fps
+    EVERY_N_MILLISECONDS(1000 / FRAMES_PER_SECOND) { FastLED.show(); }
+    // update menu and parameters
     menu_checkEncoderButton();
     menu_checkEncoder();
     menu_checkTimeout();
 #ifdef SERIAL_OUTPUT
-    dumpStateToSerial(mustStoreSettings);
+    dumpStateToSerial();
 #endif
-    // store state if some of the settings changed
-    eeprom_storeState();
 }
 
