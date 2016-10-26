@@ -21,33 +21,21 @@ CRGB leds[NUM_LEDS];
 // all these pattern functions must be time-based. that is they must base their
 // visuals solely on a uint16_t input parameter that increases from 0 to 65536
 // in one animation cycle.
-uint16_t patternCycleFract = 0; // a full cycle for an effect goes from 0 to 1.0 aka 65536
-#define FRACT_TIME_DIFF(a,b) ((a >= b) ? (a - b) : ((65535 - b) + a))
 #define FRACT_TO_NUMBER(a) ((a) >> 16)
-uint16_t lastGlitterCallFract = 0;
+
 uint32_t glitterAddAccumulate = 0;
 uint32_t glitterFadeAccumulate = 0;
 CRGB glitter[NUM_LEDS];
 #define GLITTER_ADD_INTERVAL ((uint32_t)(65536/128)) // add glitter every 15ms
 #define GLITTER_FADE_INTERVAL ((uint32_t)(65536/32)) // fully fade glitter to black in 60ms
 
-void rainbow(uint16_t cycleFrac)
+void addGlitter(uint16_t cycleFract, uint16_t fractPassed, fract8 chanceOfGlitter) 
 {
-    uint8_t hue = FRACT_TO_NUMBER((uint32_t)255 * (uint32_t)cycleFrac);
-    fill_rainbow(leds, NUM_LEDS, hue, 7);
-}
-
-void addGlitter(uint16_t cycleFrac, fract8 chanceOfGlitter) 
-{
-    uint16_t fractPassed = FRACT_TIME_DIFF(cycleFrac, lastGlitterCallFract);
-    lastGlitterCallFract = cycleFrac;
     // fade existing glitter
     glitterFadeAccumulate += fractPassed;
     uint8_t fadeValue = ((uint32_t)255 * (uint32_t)glitterFadeAccumulate) / GLITTER_FADE_INTERVAL;
     if (fadeValue > 0) {
-        for (uint8_t i = 0; i < NUM_LEDS; ++i) {
-            glitter[i] -= CRGB(fadeValue, fadeValue, fadeValue);
-        }
+        fadeToBlackBy(glitter, NUM_LEDS, fadeValue);
         glitterFadeAccumulate -= ((uint32_t)fadeValue * GLITTER_FADE_INTERVAL) / (uint32_t)255;
     }
     // check if we need to add new glitter
@@ -66,32 +54,80 @@ void addGlitter(uint16_t cycleFrac, fract8 chanceOfGlitter)
     }
 }
 
-void rainbowWithGlitter(uint16_t cycleFrac) 
+void rainbow(uint16_t cycleFract, uint16_t /*fractPassed*/)
 {
-    rainbow(cycleFrac);
-    addGlitter(cycleFrac, 80);
+    uint8_t hue = FRACT_TO_NUMBER((uint32_t)255 * (uint32_t)cycleFract);
+    fill_rainbow(leds, NUM_LEDS, hue, 7);
 }
 
-void confetti(uint16_t cycleFrac)
+void rainbowWithGlitter(uint16_t cycleFract, uint16_t fractPassed) 
 {
-    // random colored speckles that blink in and fade smoothly
-    fadeToBlackBy( leds, NUM_LEDS, 10);
-    int pos = random16(NUM_LEDS);
-    leds[pos] += CHSV( (255 * cycleFrac) / 65536 + random8(64), 200, 255);
+    rainbow(cycleFract, fractPassed);
+    addGlitter(cycleFract, fractPassed, 80);
 }
 
-void sinelon(uint16_t cycleFrac)
+uint32_t confettiAddAccumulate = 0;
+uint32_t confettiFadeAccumulate = 0;
+#define CONFETTI_ADD_INTERVAL ((uint32_t)(65536/128)) // add confetti every 15ms
+#define CONFETTI_FADE_INTERVAL ((uint32_t)(65536/4)) // fully fade confetti to black in 250ms
+
+void confetti(uint16_t cycleFract, uint16_t fractPassed)
 {
-    // a colored dot sweeping back and forth, with fading trails
-    fadeToBlackBy( leds, NUM_LEDS, 20);
-    int pos = beatsin16(13,0,NUM_LEDS);
-    leds[pos] += CHSV( (255 * cycleFrac) / 65536, 255, 192);
+    uint8_t hue = FRACT_TO_NUMBER((uint32_t)255 * (uint32_t)cycleFract);
+    // fade existing confetty
+    confettiFadeAccumulate += fractPassed;
+    uint8_t fadeValue = ((uint32_t)255 * (uint32_t)confettiFadeAccumulate) / CONFETTI_FADE_INTERVAL;
+    if (fadeValue > 0) {
+        fadeToBlackBy(leds, NUM_LEDS, fadeValue);
+        confettiFadeAccumulate -= ((uint32_t)fadeValue * CONFETTI_FADE_INTERVAL) / (uint32_t)255;
+    }
+    // check if we need to add new confetti
+    confettiAddAccumulate += fractPassed;
+    while (confettiAddAccumulate > CONFETTI_ADD_INTERVAL) {
+        // time to add confetti has come. add one confetti
+        uint8_t pos = random16(NUM_LEDS);
+        leds[pos] += CHSV(hue + random8(64), 200, 191 + random8(64));
+        // decrease accumulated confetti add time
+        confettiAddAccumulate -= CONFETTI_ADD_INTERVAL;
+    }
 }
 
-void bpm(uint16_t cycleFrac)
+uint32_t sinelonFadeAccumulate = 0;
+#define SINELON_HUE_INTERVAL ((uint32_t)(65536/3))
+#define SINELON_ADD_INTERVAL ((uint32_t)(65536/256))
+#define SINELON_FADE_INTERVAL ((uint32_t)(65536/4))
+
+void sinelon(uint16_t cycleFract, uint16_t fractPassed)
+{
+    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFract) / SINELON_HUE_INTERVAL;
+    // fade existing snake
+    sinelonFadeAccumulate += fractPassed;
+    uint8_t fadeValue = ((uint32_t)255 * (uint32_t)sinelonFadeAccumulate) / SINELON_FADE_INTERVAL;
+    if (fadeValue > 0) {
+        fadeToBlackBy(leds, NUM_LEDS, fadeValue);
+        sinelonFadeAccumulate -= ((uint32_t)fadeValue * SINELON_FADE_INTERVAL) / (uint32_t)255;
+    }
+    // add snake head
+    uint32_t addValue = ((uint32_t)255 * (uint32_t)fractPassed) / SINELON_ADD_INTERVAL;
+    // calculate snake head position
+    uint32_t pos = (((uint32_t)sin16(cycleFract) + 32767) * (NUM_LEDS - 1));
+    // calculate factors for both head pixels involved. we interpret pos as a 16.16 fixed point number
+    uint32_t posFract = pos & 65535;
+    uint8_t valueValue = (addValue * posFract) >> 16;
+    CRGB color1 = CHSV(hue, 200, 255);
+    CRGB color2 = color1;
+    color1 = color1.fadeToBlackBy(valueValue);
+    color2 = color2.fadeToBlackBy(255 - valueValue);
+    leds[pos >> 16] += color1;
+    if ((pos >> 16) + 1 < NUM_LEDS) {
+        leds[(pos >> 16) + 1] += color2;
+    }
+}
+
+void bpm(uint16_t cycleFract, uint16_t fractPassed)
 {
     // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
-    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFrac) >> 16;
+    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFract) >> 16;
     uint8_t BeatsPerMinute = 62;
     CRGBPalette16 palette = PartyColors_p;
     uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
@@ -100,7 +136,7 @@ void bpm(uint16_t cycleFrac)
     }
 }
 
-void juggle(uint16_t cycleFrac)
+void juggle(uint16_t cycleFrac, uint16_t fractPassed)
 {
     // eight colored dots, weaving in and out of sync with each other
     fadeToBlackBy( leds, NUM_LEDS, 20);
@@ -112,12 +148,15 @@ void juggle(uint16_t cycleFrac)
 }
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
-typedef void (*PatternFunction)(uint16_t);
+typedef void (*PatternFunction)(uint16_t, uint16_t);
 PatternFunction patterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
 bool cyclePatterns = true; // true = cycle through patterns
 uint8_t patternIndex = 0; // [0, ARRAY_SIZE(patterns) - 1]
 #define PATTERNINDEX_MIN 0
 #define PATTERNINDEX_MAX ARRAY_SIZE(patterns)-1
+uint16_t patternCycleFract = 0; // a full cycle for an effect goes from 0 to 1.0 aka 65536
+uint16_t lastPatternCallFract = 0; // the difference between this and the last pattern function call
+#define FRACT_TIME_DIFF(a,b) ((a >= b) ? (a - b) : ((65535 - b) + a))
 
 void patterns_next()
 {
@@ -127,8 +166,14 @@ void patterns_next()
 void patterns_update(uint8_t factor)
 {	
     EVERY_N_SECONDS(10) { if (cyclePatterns) { patterns_next(); } } // change patterns periodically
-	EVERY_N_MILLISECONDS(50) { patternCycleFract += ((((uint32_t)65535 * 50) * factor) / 1024) / 512; } // calculate fractional pattern cycle increase
-    patterns[patternIndex](patternCycleFract);
+	EVERY_N_MILLISECONDS(50) {
+        // calculate fractional pattern cycle increase
+    	patternCycleFract += ((((uint32_t)65535 * 50) * factor) / 1024) / 512;
+        // calculate time passed from last call to this call
+        uint16_t patternCallFracPassed = FRACT_TIME_DIFF(patternCycleFract, lastPatternCallFract);
+        lastPatternCallFract = patternCycleFract;
+        patterns[patternIndex](patternCycleFract, patternCallFracPassed);
+	}
 }
 
 uint8_t brightness = 96; // [32, 255]
@@ -255,7 +300,7 @@ void menu_overlay()
         }
         // dim down second row of display for menu
         for (int i = 12; i < 16; ++i) {
-            leds[i].fadeToBlackBy(192);
+            leds[i].fadeToBlackBy(150);
         }
         // make blinking work
         EVERY_N_MILLISECONDS( MENU_BLINK_INTERVAL ) { menuBlinkState = !menuBlinkState; }
@@ -402,7 +447,8 @@ void setup()
 void loop()
 {
     // update display at 60fps
-    EVERY_N_MILLISECONDS(1000 / FRAMES_PER_SECOND) {
+    EVERY_N_MILLISECONDS(1000 / FRAMES_PER_SECOND)
+    {
         FastLED.setBrightness(brightness);
         // update LEDs through pattern
         patterns_update(speed);
