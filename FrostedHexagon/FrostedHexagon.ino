@@ -19,27 +19,57 @@ CRGB leds[NUM_LEDS];
 
 //----- pattern functions ----------------------------------------------
 // all these pattern functions must be time-based. that is they must base their
-// visuals solely on a uint16_t input parameter that increases from 0 to 65536 
+// visuals solely on a uint16_t input parameter that increases from 0 to 65536
 // in one animation cycle.
+uint16_t patternCycleFract = 0; // a full cycle for an effect goes from 0 to 1.0 aka 65536
+#define FRACT_TIME_DIFF(a,b) ((a >= b) ? (a - b) : ((65535 - b) + a))
+#define FRACT_TO_NUMBER(a) ((a) >> 16)
+uint16_t lastGlitterCallFract = 0;
+uint32_t glitterAddAccumulate = 0;
+uint32_t glitterFadeAccumulate = 0;
+CRGB glitter[NUM_LEDS];
+#define GLITTER_ADD_INTERVAL ((uint32_t)(65536/128)) // add glitter every 15ms
+#define GLITTER_FADE_INTERVAL ((uint32_t)(65536/32)) // fully fade glitter to black in 60ms
 
 void rainbow(uint16_t cycleFrac)
 {
-    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFrac) >> 16;
-    fill_rainbow( leds, NUM_LEDS, hue, 7);
+    uint8_t hue = FRACT_TO_NUMBER((uint32_t)255 * (uint32_t)cycleFrac);
+    fill_rainbow(leds, NUM_LEDS, hue, 7);
 }
 
-void addGlitter( fract8 chanceOfGlitter) 
+void addGlitter(uint16_t cycleFrac, fract8 chanceOfGlitter) 
 {
-    if (random8() < chanceOfGlitter) {
-        leds[ random16(NUM_LEDS) ] += CRGB::White;
+    uint16_t fractPassed = FRACT_TIME_DIFF(cycleFrac, lastGlitterCallFract);
+    lastGlitterCallFract = cycleFrac;
+    // fade existing glitter
+    glitterFadeAccumulate += fractPassed;
+    uint8_t fadeValue = ((uint32_t)255 * (uint32_t)glitterFadeAccumulate) / GLITTER_FADE_INTERVAL;
+    if (fadeValue > 0) {
+        for (uint8_t i = 0; i < NUM_LEDS; ++i) {
+            glitter[i] -= CRGB(fadeValue, fadeValue, fadeValue);
+        }
+        glitterFadeAccumulate -= ((uint32_t)fadeValue * GLITTER_FADE_INTERVAL) / (uint32_t)255;
+    }
+    // check if we need to add new glitter
+    glitterAddAccumulate += fractPassed;
+    while (glitterAddAccumulate > GLITTER_ADD_INTERVAL) {
+        // time to add glitter has come. add one glitter
+        if (random8() < chanceOfGlitter) {
+            glitter[random16(NUM_LEDS)] = CRGB::White;
+        }
+        // decrease accumulated glitter add time
+        glitterAddAccumulate -= GLITTER_ADD_INTERVAL;
+    }
+    // add glitter to LED data
+    for (uint8_t j = 0; j < NUM_LEDS; ++j) {
+        leds[j] += glitter[j];
     }
 }
 
 void rainbowWithGlitter(uint16_t cycleFrac) 
 {
-    // built-in FastLED rainbow, plus some random sparkly glitter
     rainbow(cycleFrac);
-    addGlitter(80);
+    addGlitter(cycleFrac, 80);
 }
 
 void confetti(uint16_t cycleFrac)
@@ -88,7 +118,6 @@ bool cyclePatterns = true; // true = cycle through patterns
 uint8_t patternIndex = 0; // [0, ARRAY_SIZE(patterns) - 1]
 #define PATTERNINDEX_MIN 0
 #define PATTERNINDEX_MAX ARRAY_SIZE(patterns)-1
-uint16_t patternCycleFract = 0; // a full cycle for an effect goes from 0 to 1.0 aka 65536
 
 void patterns_next()
 {
@@ -372,13 +401,16 @@ void setup()
   
 void loop()
 {
-    FastLED.setBrightness(brightness);
-    // update LEDs through pattern
-    patterns_update(speed);
-    // draw GUI on top of LED data
-    menu_overlay();
-    // push data to LEDs at 60fps
-    EVERY_N_MILLISECONDS(1000 / FRAMES_PER_SECOND) { FastLED.show(); }
+    // update display at 60fps
+    EVERY_N_MILLISECONDS(1000 / FRAMES_PER_SECOND) {
+        FastLED.setBrightness(brightness);
+        // update LEDs through pattern
+        patterns_update(speed);
+        // draw GUI on top of LED data
+        menu_overlay();
+        // push data to LEDs
+        FastLED.show();
+    }
     // update menu and parameters
     menu_checkEncoderButton();
     menu_checkEncoder();
