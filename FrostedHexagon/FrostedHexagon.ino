@@ -22,7 +22,6 @@ CRGB leds[NUM_LEDS];
 // visuals solely on a uint16_t input parameter that increases from 0 to 65536
 // in one animation cycle.
 #define FRACT_TO_NUMBER(a) ((a) >> 16)
-
 uint32_t glitterAddAccumulate = 0;
 uint32_t glitterFadeAccumulate = 0;
 CRGB glitter[NUM_LEDS];
@@ -165,7 +164,7 @@ void patterns_next()
 
 void patterns_update(uint8_t factor)
 {	
-    EVERY_N_SECONDS(10) { if (cyclePatterns) { patterns_next(); } } // change patterns periodically
+    EVERY_N_SECONDS(60) { if (cyclePatterns) { patterns_next(); } } // change patterns periodically
 	EVERY_N_MILLISECONDS(50) {
         // calculate fractional pattern cycle increase
     	patternCycleFract += ((((uint32_t)65535 * 50) * factor) / 1024) / 512;
@@ -295,12 +294,8 @@ void menu_overlay()
 {
     if (menuState > 0) {
         // clear first row of display for menu
-        for (int i = 16; i < NUM_LEDS; ++i) { 
+        for (int i = 12; i < NUM_LEDS; ++i) { 
             leds[i] = CRGB(0, 0, 0);
-        }
-        // dim down second row of display for menu
-        for (int i = 12; i < 16; ++i) {
-            leds[i].fadeToBlackBy(150);
         }
         // make blinking work
         EVERY_N_MILLISECONDS( MENU_BLINK_INTERVAL ) { menuBlinkState = !menuBlinkState; }
