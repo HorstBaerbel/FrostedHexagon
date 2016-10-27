@@ -22,31 +22,34 @@ CRGB leds[NUM_LEDS];
 // visuals solely on a uint16_t input parameter that increases from 0 to 65536
 // in one animation cycle.
 #define FRACT_TO_NUMBER(a) ((a) >> 16)
-uint32_t glitterAddAccumulate = 0;
-uint32_t glitterFadeAccumulate = 0;
+
 CRGB glitter[NUM_LEDS];
 #define GLITTER_ADD_INTERVAL ((uint32_t)(65536/128)) // add glitter every 15ms
 #define GLITTER_FADE_INTERVAL ((uint32_t)(65536/32)) // fully fade glitter to black in 60ms
 
+#define FUNCTION_BY_INTERVAL_VALUE(fractPassed, interval, function) ({ \
+    static uint32_t accumulate = 0; \
+    accumulate += fractPassed; \
+    uint8_t value = ((uint32_t)255 * accumulate) / (uint32_t)(interval); \
+    if (value > 0) { \
+        function \
+        accumulate -= ((uint32_t)value * (uint32_t)(interval)) / (uint32_t)255; \
+    }})
+
+#define FUNCTION_BY_INTERVAL_LOOP(fractPassed, interval, function) ({ \
+    static uint32_t accumulate = 0; \
+    accumulate += fractPassed; \
+    while (accumulate > interval) { \
+        function \
+        accumulate -= interval; \
+    }})
+
 void addGlitter(uint16_t cycleFract, uint16_t fractPassed, fract8 chanceOfGlitter) 
 {
     // fade existing glitter
-    glitterFadeAccumulate += fractPassed;
-    uint8_t fadeValue = ((uint32_t)255 * (uint32_t)glitterFadeAccumulate) / GLITTER_FADE_INTERVAL;
-    if (fadeValue > 0) {
-        fadeToBlackBy(glitter, NUM_LEDS, fadeValue);
-        glitterFadeAccumulate -= ((uint32_t)fadeValue * GLITTER_FADE_INTERVAL) / (uint32_t)255;
-    }
+    FUNCTION_BY_INTERVAL_VALUE(fractPassed, GLITTER_FADE_INTERVAL, fadeToBlackBy(glitter, NUM_LEDS, value););
     // check if we need to add new glitter
-    glitterAddAccumulate += fractPassed;
-    while (glitterAddAccumulate > GLITTER_ADD_INTERVAL) {
-        // time to add glitter has come. add one glitter
-        if (random8() < chanceOfGlitter) {
-            glitter[random16(NUM_LEDS)] = CRGB::White;
-        }
-        // decrease accumulated glitter add time
-        glitterAddAccumulate -= GLITTER_ADD_INTERVAL;
-    }
+    FUNCTION_BY_INTERVAL_LOOP(fractPassed, GLITTER_ADD_INTERVAL, if (random8() < chanceOfGlitter) { glitter[random16(NUM_LEDS)] = CRGB::White; });
     // add glitter to LED data
     for (uint8_t j = 0; j < NUM_LEDS; ++j) {
         leds[j] += glitter[j];
@@ -65,8 +68,6 @@ void rainbowWithGlitter(uint16_t cycleFract, uint16_t fractPassed)
     addGlitter(cycleFract, fractPassed, 80);
 }
 
-uint32_t confettiAddAccumulate = 0;
-uint32_t confettiFadeAccumulate = 0;
 #define CONFETTI_ADD_INTERVAL ((uint32_t)(65536/128)) // add confetti every 15ms
 #define CONFETTI_FADE_INTERVAL ((uint32_t)(65536/4)) // fully fade confetti to black in 250ms
 
@@ -74,24 +75,11 @@ void confetti(uint16_t cycleFract, uint16_t fractPassed)
 {
     uint8_t hue = FRACT_TO_NUMBER((uint32_t)255 * (uint32_t)cycleFract);
     // fade existing confetty
-    confettiFadeAccumulate += fractPassed;
-    uint8_t fadeValue = ((uint32_t)255 * (uint32_t)confettiFadeAccumulate) / CONFETTI_FADE_INTERVAL;
-    if (fadeValue > 0) {
-        fadeToBlackBy(leds, NUM_LEDS, fadeValue);
-        confettiFadeAccumulate -= ((uint32_t)fadeValue * CONFETTI_FADE_INTERVAL) / (uint32_t)255;
-    }
+    FUNCTION_BY_INTERVAL_VALUE(fractPassed, CONFETTI_FADE_INTERVAL, fadeToBlackBy(leds, NUM_LEDS, value););
     // check if we need to add new confetti
-    confettiAddAccumulate += fractPassed;
-    while (confettiAddAccumulate > CONFETTI_ADD_INTERVAL) {
-        // time to add confetti has come. add one confetti
-        uint8_t pos = random16(NUM_LEDS);
-        leds[pos] += CHSV(hue + random8(64), 200, 191 + random8(64));
-        // decrease accumulated confetti add time
-        confettiAddAccumulate -= CONFETTI_ADD_INTERVAL;
-    }
+    FUNCTION_BY_INTERVAL_LOOP(fractPassed, GLITTER_ADD_INTERVAL, leds[random16(NUM_LEDS)] += CHSV(hue + random8(64), 200, 191 + random8(64)););
 }
 
-uint32_t sinelonFadeAccumulate = 0;
 #define SINELON_HUE_INTERVAL ((uint32_t)(65536/3))
 #define SINELON_ADD_INTERVAL ((uint32_t)(65536/256))
 #define SINELON_FADE_INTERVAL ((uint32_t)(65536/4))
@@ -100,12 +88,7 @@ void sinelon(uint16_t cycleFract, uint16_t fractPassed)
 {
     uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFract) / SINELON_HUE_INTERVAL;
     // fade existing snake
-    sinelonFadeAccumulate += fractPassed;
-    uint8_t fadeValue = ((uint32_t)255 * (uint32_t)sinelonFadeAccumulate) / SINELON_FADE_INTERVAL;
-    if (fadeValue > 0) {
-        fadeToBlackBy(leds, NUM_LEDS, fadeValue);
-        sinelonFadeAccumulate -= ((uint32_t)fadeValue * SINELON_FADE_INTERVAL) / (uint32_t)255;
-    }
+    FUNCTION_BY_INTERVAL_VALUE(fractPassed, SINELON_FADE_INTERVAL, fadeToBlackBy(leds, NUM_LEDS, value););
     // add snake head
     uint32_t addValue = ((uint32_t)255 * (uint32_t)fractPassed) / SINELON_ADD_INTERVAL;
     // calculate snake head position
