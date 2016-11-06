@@ -1,8 +1,12 @@
 //----- Helpers -----------------------------------------------------
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
-//#define SERIAL_OUTPUT
-#ifdef SERIAL_OUTPUT
+// define this to output debug messages through the serial port
+//#define DEBUG_OUTPUT
+#ifdef DEBUG_OUTPUT
+    #ifndef SERIAL_OUTPUT
+        #define SERIAL_OUTPUT
+    #endif
     void dumpStateToSerial(bool dumpOverride = false);
 #endif
 
@@ -13,9 +17,43 @@ FASTLED_USING_NAMESPACE
 #define DATA_PIN 2
 #define LED_TYPE WS2812
 #define COLOR_ORDER GRB
+#define LEDS_HEIGHT 5
 #define NUM_LEDS 19
-CRGB leds[NUM_LEDS];
+CRGB leds0[NUM_LEDS];
+CRGB leds1[NUM_LEDS];
+#define SIZE_LEDS sizeof(leds0)
+CRGB *frontBuffer = (CRGB*)&leds0;
+CRGB *backBuffer = (CRGB*)&leds1;
 #define FRAMES_PER_SECOND 60
+
+// define this to output LED data to processing via the serial port
+//#define ENABLE_LED_EMULATION
+#ifdef ENABLE_LED_EMULATION
+    #ifndef SERIAL_OUTPUT
+        #define SERIAL_OUTPUT
+    #endif
+    void dumpFrameBufferToSerial(const CRGB * buffer, uint16_t size);
+#endif
+
+const uint8_t pixelsPerLine[5] = {3, 4, 5, 4, 3};
+
+const int8_t pixelMap[5][5] = {
+    { 16, 17, 18, -1, -1},
+    { 15, 14, 13, 12, -1},
+    {  7,  8,  9, 10, 11},
+    {  6,  5,  4,  3, -1},
+    {  0,  1,  2, -1, -1}
+}; // maps virtual screen pixels to the display. if a pixel index is -1 it does not exist
+
+struct vec2 { int8_t x; int8_t y; };
+
+const vec2 shiftMap0[5][5] = {
+    {{-1,  0}, {-1,  0}, {-1,  0}, { 0,  0}, { 0,  0}},
+    {{ 1,  0}, { 1,  0}, { 1,  0}, { 1,  0}, { 0,  0}},
+    {{-1,  0}, {-1,  0}, {-1,  0}, {-1,  0}, {-1,  0}},
+    {{ 1,  0}, { 1,  0}, { 1,  0}, { 1,  0}, { 0,  0}},
+    {{-1,  0}, {-1,  0}, {-1,  0}, { 0,  0}, { 0,  0}}
+};
 
 //----- pattern functions ----------------------------------------------
 // all these pattern functions must be time-based. that is they must base their
@@ -52,14 +90,14 @@ void addGlitter(uint16_t cycleFract, uint16_t fractPassed, fract8 chanceOfGlitte
     FUNCTION_BY_INTERVAL_LOOP(fractPassed, GLITTER_ADD_INTERVAL, if (random8() < chanceOfGlitter) { glitter[random16(NUM_LEDS)] = CRGB::White; });
     // add glitter to LED data
     for (uint8_t j = 0; j < NUM_LEDS; ++j) {
-        leds[j] += glitter[j];
+        frontBuffer[j] += glitter[j];
     }
 }
 
 void rainbow(uint16_t cycleFract, uint16_t /*fractPassed*/)
 {
     uint8_t hue = FRACT_TO_NUMBER((uint32_t)255 * (uint32_t)cycleFract);
-    fill_rainbow(leds, NUM_LEDS, hue, 7);
+    fill_rainbow(frontBuffer, NUM_LEDS, hue, 7);
 }
 
 void rainbowWithGlitter(uint16_t cycleFract, uint16_t fractPassed) 
@@ -75,9 +113,9 @@ void confetti(uint16_t cycleFract, uint16_t fractPassed)
 {
     uint8_t hue = FRACT_TO_NUMBER((uint32_t)255 * (uint32_t)cycleFract);
     // fade existing confetty
-    FUNCTION_BY_INTERVAL_VALUE(fractPassed, CONFETTI_FADE_INTERVAL, fadeToBlackBy(leds, NUM_LEDS, value););
+    FUNCTION_BY_INTERVAL_VALUE(fractPassed, CONFETTI_FADE_INTERVAL, fadeToBlackBy(frontBuffer, NUM_LEDS, value););
     // check if we need to add new confetti
-    FUNCTION_BY_INTERVAL_LOOP(fractPassed, GLITTER_ADD_INTERVAL, leds[random16(NUM_LEDS)] += CHSV(hue + random8(64), 200, 191 + random8(64)););
+    FUNCTION_BY_INTERVAL_LOOP(fractPassed, CONFETTI_FADE_INTERVAL, frontBuffer[random16(NUM_LEDS)] += CHSV(hue + random8(64), 200, 191 + random8(64)););
 }
 
 #define SINELON_HUE_INTERVAL ((uint32_t)(65536/3))
@@ -88,7 +126,7 @@ void sinelon(uint16_t cycleFract, uint16_t fractPassed)
 {
     uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFract) / SINELON_HUE_INTERVAL;
     // fade existing snake
-    FUNCTION_BY_INTERVAL_VALUE(fractPassed, SINELON_FADE_INTERVAL, fadeToBlackBy(leds, NUM_LEDS, value););
+    FUNCTION_BY_INTERVAL_VALUE(fractPassed, SINELON_FADE_INTERVAL, fadeToBlackBy(frontBuffer, NUM_LEDS, value););
     // add snake head
     uint32_t addValue = ((uint32_t)255 * (uint32_t)fractPassed) / SINELON_ADD_INTERVAL;
     // calculate snake head position
@@ -100,38 +138,86 @@ void sinelon(uint16_t cycleFract, uint16_t fractPassed)
     CRGB color2 = color1;
     color1 = color1.fadeToBlackBy(valueValue);
     color2 = color2.fadeToBlackBy(255 - valueValue);
-    leds[pos >> 16] += color1;
+    frontBuffer[pos >> 16] += color1;
     if ((pos >> 16) + 1 < NUM_LEDS) {
-        leds[(pos >> 16) + 1] += color2;
+        frontBuffer[(pos >> 16) + 1] += color2;
     }
+    FUNCTION_BY_INTERVAL_LOOP(fractPassed, GLITTER_ADD_INTERVAL, frontBuffer[random16(NUM_LEDS)] += CHSV(hue + random8(64), 200, 191 + random8(64)););
 }
 
-void bpm(uint16_t cycleFract, uint16_t fractPassed)
+#define APPLYMAP_HUE_INTERVAL ((uint32_t)(65536/3))
+#define APPLYMAP_SHIFT_INTERVAL ((uint32_t)(65536/16))
+#define APPLYMAP_ADD_INTERVAL ((uint32_t)(65536/4))
+
+void applyMap0(uint16_t cycleFract, uint16_t fractPassed)
 {
-    // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
-    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFract) >> 16;
-    uint8_t BeatsPerMinute = 62;
-    CRGBPalette16 palette = PartyColors_p;
-    uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
-    for( int i = 0; i < NUM_LEDS; i++) { //9948
-        leds[i] = ColorFromPalette(palette, hue + (i*2), beat - hue + (i*10));
-    }
+    applyMap(cycleFract, fractPassed, &shiftMap0);
 }
 
-void juggle(uint16_t cycleFrac, uint16_t fractPassed)
+void applyMap(uint16_t cycleFract, uint16_t fractPassed, const vec2 (*shiftMap)[5][5])
 {
-    // eight colored dots, weaving in and out of sync with each other
-    fadeToBlackBy( leds, NUM_LEDS, 20);
-    byte dothue = 0;
-    for( int i = 0; i < 8; i++) {
-        leds[beatsin16(i+7,0,NUM_LEDS)] |= CHSV(dothue, 200, 255);
-        dothue += 32;
-    }
+    FUNCTION_BY_INTERVAL_LOOP(fractPassed, APPLYMAP_SHIFT_INTERVAL, 
+        //memset(backBuffer, 0, SIZE_LEDS);
+        memcpy(backBuffer, frontBuffer, SIZE_LEDS);
+        for (int8_t y = 0; y < LEDS_HEIGHT; ++y) {
+            int8_t w = pixelsPerLine[y];
+            for (int8_t x = 0; x < w; ++x) {
+                // get shift value from map
+                vec2 shift = (*shiftMap)[y][x];
+                // calculate source pixel and clamp to display
+                int8_t dstY = y + shift.y;
+                if (dstY >= 0 && dstY < LEDS_HEIGHT) {
+                    int8_t dstX = x + shift.x;
+                    if (dstX >= 0 && dstX < pixelsPerLine[dstY]) {
+                        // copy color from source to backbuffer
+                        CRGB color0 = frontBuffer[pixelMap[dstY][dstX]] / (uint8_t)2;
+                        CRGB color1 = backBuffer[pixelMap[y][x]] / (uint8_t)2;
+                        frontBuffer[pixelMap[dstY][dstX]] = color0 + color1;
+                    }
+                }
+            }
+        }
+        // copy back buffer to front buffer
+        /*for (uint8_t i = 0; i < NUM_LEDS; ++i) {
+            frontBuffer[i] += backBuffer[i] / (uint8_t)16;
+        }*/
+    );
+    // add some pixels from time to time
+    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFract) / APPLYMAP_HUE_INTERVAL;
+    FUNCTION_BY_INTERVAL_LOOP(fractPassed, APPLYMAP_ADD_INTERVAL, frontBuffer[random16(NUM_LEDS)] += CHSV(hue + random8(64), 200, 191 + random8(64)););
+}
+
+#define SIFT_MOVE_INTERVAL ((uint32_t)(65536/16))
+#define SIFT_HUE_INTERVAL ((uint32_t)(65536/3))
+
+void sift(uint16_t cycleFract, uint16_t fractPassed)
+{
+    static const int8_t lineAdjustDestX[5] = {0, 0, 0, -1, -1};
+    uint8_t hue = ((uint32_t)255 * (uint32_t)cycleFract) / SIFT_HUE_INTERVAL;
+    FUNCTION_BY_INTERVAL_LOOP(fractPassed, SIFT_MOVE_INTERVAL, 
+        // clear bottom row first
+        for (int8_t x = 0; x < pixelsPerLine[4]; ++x) {
+            frontBuffer[pixelMap[4][x]] = CRGB::Black;
+        }
+        // loop from bottom to top and shift pixels down a line. pixels can either go left or right
+        for (int8_t y = 3; y >= 0; --y) {
+            int8_t adjustX = lineAdjustDestX[y + 1];
+            for (int8_t x = 0; x < pixelsPerLine[y]; ++x) {
+                int8_t destX = x + random8(1) + adjustX;
+                if (destX >= 0 || destX < pixelsPerLine[y + 1]) {
+                    frontBuffer[pixelMap[y + 1][destX]] = frontBuffer[pixelMap[y][x]];
+                    frontBuffer[pixelMap[y][x]] = CRGB::Black;
+                }
+            }
+        }
+        // now add some pixels at the top from time to time
+        frontBuffer[pixelMap[0][random16(3)]] += CHSV(hue + random8(64), 200, 191 + random8(64));
+    );
 }
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*PatternFunction)(uint16_t, uint16_t);
-PatternFunction patterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
+PatternFunction patterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon, applyMap0 };
 bool cyclePatterns = true; // true = cycle through patterns
 uint8_t patternIndex = 0; // [0, ARRAY_SIZE(patterns) - 1]
 #define PATTERNINDEX_MIN 0
@@ -278,7 +364,7 @@ void menu_overlay()
     if (menuState > 0) {
         // clear first row of display for menu
         for (int i = 12; i < NUM_LEDS; ++i) { 
-            leds[i] = CRGB(0, 0, 0);
+            frontBuffer[i] = CRGB(0, 0, 0);
         }
         // make blinking work
         EVERY_N_MILLISECONDS( MENU_BLINK_INTERVAL ) { menuBlinkState = !menuBlinkState; }
@@ -286,13 +372,13 @@ void menu_overlay()
         // highlight selected menu item
         switch (menuIndex) {
             case 0: // select pattern
-                leds[16] = CRGB(colorValue, 0, 0);
+                frontBuffer[16] = CRGB(colorValue, 0, 0);
                 break;
             case 1: // set brightness
-                leds[17] = CRGB(0, colorValue, 0);
+                frontBuffer[17] = CRGB(0, colorValue, 0);
                 break;
             case 2: // set speed
-                leds[18] = CRGB(0, 0, colorValue);
+                frontBuffer[18] = CRGB(0, 0, colorValue);
                 break;
         }
     }
@@ -316,14 +402,14 @@ void eeprom_storeState() {
         EEPROM.update(address++, patternIndex);
         EEPROM.update(address++, cyclePatterns);
         EEPROM.update(address++, menuIndex);
-#ifdef SERIAL_OUTPUT
+#ifdef DEBUG_OUTPUT
         Serial.println("Stored to EEPROM");
 #endif
     }
 }
 
 void eeprom_loadState() {
-#ifdef SERIAL_OUTPUT
+#ifdef DEBUG_OUTPUT
     Serial.print("Loading from EEPROM - ");
 #endif
     int address = EEPROM_START_ADDRESS;
@@ -347,11 +433,11 @@ void eeprom_loadState() {
         cyclePatterns = constrain(tempCyclePatterns, false, true);
         uint8_t tempMenuIndex = EEPROM.read(address++);
         menuIndex = constrain(tempMenuIndex, MENUINDEX_MIN, MENUINDEX_MAX);
-#ifdef SERIAL_OUTPUT
+#ifdef DEBUG_OUTPUT
         Serial.println("Ok. Read:");
 #endif
     }
-#ifdef SERIAL_OUTPUT
+#ifdef DEBUG_OUTPUT
     else {
         Serial.println("Error. Bad magic number!");
     }
@@ -362,7 +448,7 @@ void eeprom_loadState() {
 
 //----- main loop -----------------------------------------------------
 
-#ifdef SERIAL_OUTPUT
+#ifdef DEBUG_OUTPUT
 uint8_t lastBrightness = brightness;
 uint8_t lastSpeed = speed;
 uint8_t lastPatternIndex = patternIndex;
@@ -409,17 +495,29 @@ void dumpStateToSerial(bool dumpOverride)
 }
 #endif
 
+#ifdef ENABLE_LED_EMULATION
+void dumpFrameBufferToSerial(const CRGB * buffer, uint16_t size)
+{
+    Serial.print("LEDS,");
+    uint16_t sizeBuffer = size;
+    Serial.write((byte *)&sizeBuffer, 2);
+    Serial.print(",");
+    Serial.write((const byte *)buffer, size * sizeof(CRGB));
+}
+#endif
+
 void setup()
 {
     delay(3000); // 3 second delay for recovery
 #ifdef SERIAL_OUTPUT
-    Serial.begin(115200);
+    Serial.begin(230400);
+    Serial.setTimeout(10);
     Serial.println("----- Started -----");
 #endif
     eeprom_loadState(); // load state from EEPROM
     encoder.write(0);
     // set up LEDs
-    FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+    FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(frontBuffer, NUM_LEDS).setCorrection(TypicalLEDStrip);
 }
   
 void loop()
@@ -439,8 +537,11 @@ void loop()
     menu_checkEncoderButton();
     menu_checkEncoder();
     menu_checkTimeout();
-#ifdef SERIAL_OUTPUT
+#ifdef DEBUG_OUTPUT
     dumpStateToSerial();
+#endif
+#ifdef ENABLE_LED_EMULATION
+    dumpFrameBufferToSerial(frontBuffer, SIZE_LEDS);
 #endif
 }
 
