@@ -1,9 +1,14 @@
 import processing.serial.*;
+import controlP5.*;
 
+ControlP5 cp5;
+Knob knobPattern;
+Slider sliderBrightness;
+Slider sliderSpeed;
 Serial myPort;  // Create object from Serial class
 String val;     // Data received from the serial port
 String portName = "/dev/ttyACM0";
-int portSpeed = 234000;
+int portSpeed = 230400;
 byte[] headerData = new byte[7];
 byte[] ledData;
 PFont font;
@@ -64,12 +69,35 @@ void drawLEDs(byte[] ledData, int numLeds)
   drawText(10, height - 10, "Frame time: " + frameTimeMs + "ms"); 
 }
 
+//------------------------------------------------------------------------- //<>//
+
 void setup()
 {
-  size(320, 320);
+  size(480, 320);
+  cp5 = new ControlP5(this);
+  sliderBrightness = cp5.addSlider("brightness")
+     .setPosition(330, 80)
+     .setSize(80, 20)
+     .setRange(32, 255)
+     .setValue(96)
+     .setColorCaptionLabel(color(255,255,255));
+  sliderSpeed = cp5.addSlider("speed")
+     .setPosition(330, 110)
+     .setSize(80, 20)
+     .setRange(1, 255)
+     .setValue(128)
+     .setColorCaptionLabel(color(255,255,255));
+  knobPattern = cp5.addKnob("pattern")
+    .setRange(0,3)
+    .setValue(1)
+    .setNumberOfTickMarks(3)
+    .snapToTickMarks(true)
+    .setPosition(360, 10)
+    .setRadius(25)
+    .setDragDirection(Knob.HORIZONTAL);
   font = createFont("Arial", 16, true); // Arial, 16 point, anti-aliasing on
   myPort = new Serial(this, portName, portSpeed);
-  delay(3000); //<>//
+  myPort.clear();
 }
 
 void draw()
@@ -110,5 +138,9 @@ void draw()
     }
     //println(millis() + "ms - " + bytesRead + " Bytes received.");
     drawLEDs(ledData, numLeds);
+    // now check how much LED data we have accumulated. If it is more than one frame, kill the data
+    if (myPort.available() > numBytes + 10) {
+      myPort.clear();
+    }
   }
 }

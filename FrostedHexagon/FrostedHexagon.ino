@@ -217,7 +217,7 @@ void sift(uint16_t cycleFract, uint16_t fractPassed)
 
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*PatternFunction)(uint16_t, uint16_t);
-PatternFunction patterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon, applyMap0 };
+PatternFunction patterns[] = { rainbow, rainbowWithGlitter, confetti, sinelon/*, applyMap0*/ };
 bool cyclePatterns = true; // true = cycle through patterns
 uint8_t patternIndex = 0; // [0, ARRAY_SIZE(patterns) - 1]
 #define PATTERNINDEX_MIN 0
