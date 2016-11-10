@@ -32,7 +32,12 @@ CRGB *backBuffer = (CRGB*)&leds1;
     #ifndef SERIAL_OUTPUT
         #define SERIAL_OUTPUT
     #endif
-    void dumpFrameBufferToSerial(const CRGB * buffer, uint16_t size);
+    #define PARAMETER_CHAR_PATTERN 'p'
+    #define PARAMETER_CHAR_CYCLE 'c'
+    #define PARAMETER_CHAR_BRIGHTNESS 'b'
+    #define PARAMETER_CHAR_SPEED 's'
+    void dumpFrameBufferToSerial(const CRGB * buffer, uint16_t size = SIZE_LEDS);
+    void readParametersFromSerial();
 #endif
 
 const uint8_t pixelsPerLine[5] = {3, 4, 5, 4, 3};
@@ -502,7 +507,31 @@ void dumpFrameBufferToSerial(const CRGB * buffer, uint16_t size)
     uint16_t sizeBuffer = size;
     Serial.write((byte *)&sizeBuffer, 2);
     Serial.print(",");
-    Serial.write((const byte *)buffer, size * sizeof(CRGB));
+    Serial.write((const byte *)buffer, size);
+}
+
+void readParametersFromSerial()
+{
+     if (Serial.available() >= 2) {
+        const uint8_t command = Serial.read();
+        const uint8_t value = Serial.read();
+        switch (command) {
+            case PARAMETER_CHAR_PATTERN:
+                patternIndex = constrain(value, PATTERNINDEX_MIN, PATTERNINDEX_MAX);
+                break;
+            case PARAMETER_CHAR_CYCLE:
+                cyclePatterns = constrain(value, false, true);
+                break;
+            case PARAMETER_CHAR_BRIGHTNESS:
+                brightness = constrain(value, BRIGHTNESS_MIN, BRIGHTNESS_MAX);
+                break;
+            case PARAMETER_CHAR_SPEED:
+                speed = constrain(value, SPEED_MIN, SPEED_MAX);
+                break;
+            default:
+                break;
+        }
+     }
 }
 #endif
 
@@ -510,7 +539,7 @@ void setup()
 {
     delay(3000); // 3 second delay for recovery
 #ifdef SERIAL_OUTPUT
-    Serial.begin(230400);
+    Serial.begin(115200);
     Serial.setTimeout(10);
     Serial.println("----- Started -----");
 #endif
@@ -541,7 +570,8 @@ void loop()
     dumpStateToSerial();
 #endif
 #ifdef ENABLE_LED_EMULATION
-    dumpFrameBufferToSerial(frontBuffer, SIZE_LEDS);
+    dumpFrameBufferToSerial(frontBuffer);
+    readParametersFromSerial();
 #endif
 }
 
