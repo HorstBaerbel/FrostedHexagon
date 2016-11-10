@@ -183,8 +183,9 @@ void draw()
       drawLEDs(ledData, numLeds);
       serialState = SerialState.WaitForHeader;
       // check if we have already too many bytes pending
+      // throw away data until we have not more than one frame left 
       int maxMessageLength = ledData.length + messageHeader.length + sizeData.length;
-      if (myPort.available() > maxMessageLength) {
+      while (myPort.available() > maxMessageLength) {
         myPort.readBytes(maxMessageLength);
       }
     }

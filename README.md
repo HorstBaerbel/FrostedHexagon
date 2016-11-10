@@ -17,7 +17,7 @@ No other hardware is needed.
 Turn on the "#define ENABLE_LED_EMULATION" in the Arduino code and set the correct serial port in the processing sketch. 
 When you start your Arduino and run the processing sketch, the LED data your Arduino calculated, will be transfered to and displayed in the Processing window. 
 You can use the processing GUI to adjust all the values on the Arduino and instantly see the results. 
-The timing might not bee 100% correct, but it's an easy try out new pattern algorithms when you don't have the real device handy.  
+The timing might not bee 100% correct, but it's an easy way to try out new pattern algorithms when you don't have the real device handy.  
 
 License
 ========
