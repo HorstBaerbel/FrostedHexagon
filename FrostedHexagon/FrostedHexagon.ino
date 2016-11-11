@@ -508,6 +508,7 @@ void dumpFrameBufferToSerial(const CRGB * buffer, uint16_t size)
     Serial.write((byte *)&sizeBuffer, 2);
     Serial.print(",");
     Serial.write((const byte *)buffer, size);
+    Serial.flush();
 }
 
 void readParametersFromSerial()
@@ -561,6 +562,10 @@ void loop()
         menu_overlay();
         // push data to LEDs
         FastLED.show();
+#ifdef ENABLE_LED_EMULATION
+        dumpFrameBufferToSerial(frontBuffer);
+        readParametersFromSerial();
+#endif
     }
     // update menu and parameters
     menu_checkEncoderButton();
@@ -568,10 +573,6 @@ void loop()
     menu_checkTimeout();
 #ifdef DEBUG_OUTPUT
     dumpStateToSerial();
-#endif
-#ifdef ENABLE_LED_EMULATION
-    dumpFrameBufferToSerial(frontBuffer);
-    readParametersFromSerial();
 #endif
 }
 

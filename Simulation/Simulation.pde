@@ -20,10 +20,9 @@ byte[] messageHeader = {'L', 'E', 'D', 'S', ','};
 byte[] headerData = new byte[4];
 byte[] sizeData = new byte[3];
 byte[] ledData;
-PFont font;
 int frameCount = 0;
+int frameDropCount = 0;
 int lastFrameTimeMs = millis();
-int frameTimeMs = 0;
 
 float hexSideLength = 36;
 float hexHeight = round(sin(30.0 * PI / 180.0) * hexSideLength);
@@ -31,11 +30,11 @@ float hexRadius = round(cos(30.0 * PI / 180.0) * hexSideLength);
 float hexRectangleHeight = hexSideLength + 2.0 * hexHeight;
 float hexRectangleWidth = 2.0 * hexRadius;
 float[][] hexPositions = {
-  {1, 0}, {2, 0}, {3, 0},
-  {3.5, 1}, {2.5, 1}, {1.5, 1}, {0.5, 1}, 
-  {0, 2}, {1, 2}, {2, 2}, {3, 2}, {4, 2}, 
+  {1, 4}, {2, 4}, {3, 4},
   {3.5, 3}, {2.5, 3}, {1.5, 3}, {0.5, 3}, 
-  {1, 4}, {2, 4}, {3, 4}}; // LEDs in data order (how they come from the Arduino)
+  {0, 2}, {1, 2}, {2, 2}, {3, 2}, {4, 2}, 
+  {3.5, 1}, {2.5, 1}, {1.5, 1}, {0.5, 1}, 
+  {1, 0}, {2, 0}, {3, 0}}; // LEDs in data order (how they come from the Arduino)
 
 float[][] hexVertex = { 
   {0, hexRectangleHeight/2}, {-hexRadius, hexSideLength/2},
@@ -53,13 +52,6 @@ void drawHexagon(float x, float y) {
   }
   endShape(CLOSE);
   popMatrix();
-}
-
-void drawText(float x, float y, String text)
-{
-  textFont(font, 16);
-  fill(255, 255, 255);
-  text(text, x, y);
 }
 
 void drawLEDs(byte[] ledData, int numLeds)
@@ -81,7 +73,10 @@ void drawLEDs(byte[] ledData, int numLeds)
 
 void setup()
 {
+  // set a frame rate a bit above the Arduino send rate
+  frameRate(70);
   size(480, 300);
+  // build GUI
   cp5 = new ControlP5(this);
   knobPattern = cp5.addKnob("pattern")
     .setRange(0,3)
@@ -127,9 +122,10 @@ void setup()
         speedChanged = true;
       }
     });
-  //font = createFont("Arial", 16, true); // Arial, 16 point, anti-aliasing on
+  // set up serial port
   myPort = new Serial(this, portName, portSpeed);
   myPort.clear();
+  // send initial values to Arduino
   myPort.write('p'); myPort.write(0);
   myPort.write('c'); myPort.write(0);
   myPort.write('b'); myPort.write(96);
@@ -172,21 +168,25 @@ void draw()
       // read LED data
       myPort.readBytes(ledData);
       //println(millis() + "ms - " + bytesRead + " Bytes received");
-      frameCount++;
-      if (frameCount > 20) {
-        frameTimeMs = (millis() - lastFrameTimeMs) / frameCount;
-        lastFrameTimeMs = millis();
-        frameCount = 0;
-        surface.setTitle("Simulation - Frame time: " + frameTimeMs + "ms");
-      }
       int numLeds = ledData.length / 3;
+      // update display
       drawLEDs(ledData, numLeds);
       serialState = SerialState.WaitForHeader;
-      // check if we have already too many bytes pending
-      // throw away data until we have not more than one frame left 
+      // check if we have already too many bytes pending 
       int maxMessageLength = ledData.length + messageHeader.length + sizeData.length;
-      while (myPort.available() > maxMessageLength) {
+      while (myPort.available() > 2 * maxMessageLength) {
+        // throw away data until we have not more than about one frame left
         myPort.readBytes(maxMessageLength);
+        frameDropCount++;
+      }
+      // update statistics in window title
+      if (frameCount++ >= 30) {
+        float frameTimeMs = (float)(millis() - lastFrameTimeMs) / (float)frameCount;
+        float frameDropRatio = (float)frameDropCount / (float)frameCount;
+        lastFrameTimeMs = millis();
+        frameCount = 0;
+        frameDropCount = 0;
+        surface.setTitle("Simulation - Frame time: " + nf(frameTimeMs, 2, 1) + "ms, Drop ratio: " + nf(frameDropRatio, 1, 2));
       }
     }
   }
